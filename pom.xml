@@ -38,6 +38,21 @@
             <activation>
                 <jdk>1.8</jdk>
             </activation>
+            <dependencies>
+                <!-- Add JavaFX for OpenJDK 8 environments -->
+                <dependency>
+                    <groupId>org.openjfx</groupId>
+                    <artifactId>javafx-controls</artifactId>
+                    <version>8.0.171</version>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.openjfx</groupId>
+                    <artifactId>javafx-fxml</artifactId>
+                    <version>8.0.171</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
         </profile>
 
         <!-- Profile for Java 11+ (JavaFX separate) -->
