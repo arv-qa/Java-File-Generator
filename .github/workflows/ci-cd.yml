@@ -48,16 +48,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
+        java-version: [8, 11]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set up JDK ${{ env.JAVA_VERSION }}
+    - name: Set up JDK ${{ matrix.java-version }}
       uses: actions/setup-java@v3
       with:
-        java-version: ${{ env.JAVA_VERSION }}
+        java-version: ${{ matrix.java-version }}
         distribution: 'temurin'
 
     - name: Run tests
@@ -65,3 +66,10 @@ jobs:
 
     - name: Build on ${{ matrix.os }}
       run: mvn package -DskipTests
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      if: matrix.java-version == 8
+      with:
+        name: jar-${{ matrix.os }}
+        path: target/*.jar
