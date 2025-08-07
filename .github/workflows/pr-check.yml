@@ -1,0 +1,132 @@
+name: Pull Request Check
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  JAVA_VERSION: '8'
+
+jobs:
+  pr-validation:
+    name: PR Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Validate Maven project
+      run: mvn validate
+      
+    - name: Compile code
+      run: mvn compile
+      
+    - name: Run tests
+      run: mvn test
+      
+    - name: Package application
+      run: mvn package -DskipTests
+      
+    - name: Verify JAR creation
+      run: |
+        if [ ! -f target/java-file-generator-1.0.0.jar ]; then
+          echo "JAR file was not created!"
+          exit 1
+        fi
+        echo "JAR file created successfully"
+        ls -la target/*.jar
+        
+    - name: Test JAR execution (help)
+      run: |
+        # Test that the JAR can be executed (will fail in headless environment but should show it's runnable)
+        timeout 10s java -jar target/java-file-generator-1.0.0.jar --help || true
+        echo "JAR execution test completed"
+        
+    - name: Comment PR with build status
+      uses: actions/github-script@v6
+      if: always()
+      with:
+        script: |
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          
+          const botComment = comments.find(comment => 
+            comment.user.type === 'Bot' && comment.body.includes('🤖 PR Build Status')
+          );
+          
+          const status = '${{ job.status }}' === 'success' ? '✅ PASSED' : '❌ FAILED';
+          const body = `🤖 PR Build Status: ${status}
+          
+          **Build Summary:**
+          - Compilation: ${{ steps.compile.outcome || 'N/A' }}
+          - Tests: ${{ steps.test.outcome || 'N/A' }}  
+          - Packaging: ${{ steps.package.outcome || 'N/A' }}
+          - JAR Creation: ${{ steps.verify.outcome || 'N/A' }}
+          
+          Build completed at: ${new Date().toISOString()}`;
+          
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: body
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+          }
+
+  code-style-check:
+    name: Code Style Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        
+    - name: Check code formatting
+      run: |
+        echo "Checking Java code style..."
+        # Basic checks for common style issues
+        find src -name "*.java" -exec grep -l "System.out.println" {} \; > /tmp/println_files.txt || true
+        if [ -s /tmp/println_files.txt ]; then
+          echo "⚠️ Warning: Found System.out.println statements in:"
+          cat /tmp/println_files.txt
+        fi
+        
+        # Check for TODO comments
+        find src -name "*.java" -exec grep -l "TODO\|FIXME" {} \; > /tmp/todo_files.txt || true
+        if [ -s /tmp/todo_files.txt ]; then
+          echo "📝 Info: Found TODO/FIXME comments in:"
+          cat /tmp/todo_files.txt
+        fi
+        
+        echo "Code style check completed"

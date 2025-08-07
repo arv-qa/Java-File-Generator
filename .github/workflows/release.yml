@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  JAVA_VERSION: '8'
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+        
+    - name: Update version in POM
+      run: |
+        mvn versions:set -DnewVersion=${{ steps.version.outputs.version }}
+        mvn versions:commit
+        
+    - name: Build release
+      run: mvn clean package -DskipTests
+      
+    - name: Run tests
+      run: mvn test
+      
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Generate changelog from git commits since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -z "$LAST_TAG" ]; then
+          CHANGELOG=$(git log --pretty=format:"- %s" --no-merges)
+        else
+          CHANGELOG=$(git log --pretty=format:"- %s" --no-merges $LAST_TAG..HEAD)
+        fi
+        
+        # Save changelog to file
+        echo "## Changes in this release" > CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "$CHANGELOG" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "## Installation" >> CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        echo "1. Download the JAR file below" >> CHANGELOG.md
+        echo "2. Ensure Java 8+ is installed" >> CHANGELOG.md
+        echo "3. Run: \`java -jar java-file-generator-${{ steps.version.outputs.version }}.jar\`" >> CHANGELOG.md
+        
+        cat CHANGELOG.md
+        
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Java File Generator v${{ steps.version.outputs.version }}
+        body_path: CHANGELOG.md
+        draft: false
+        prerelease: false
+        
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: target/java-file-generator-${{ steps.version.outputs.version }}.jar
+        asset_name: java-file-generator-${{ steps.version.outputs.version }}.jar
+        asset_content_type: application/java-archive
+        
+    - name: Upload Source Code
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: target/java-file-generator-${{ steps.version.outputs.version }}-sources.jar
+        asset_name: java-file-generator-${{ steps.version.outputs.version }}-sources.jar
+        asset_content_type: application/java-archive
+
+  build-multi-platform:
+    name: Build Multi-Platform
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Extract version from tag
+      id: version
+      shell: bash
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Update version in POM
+      run: |
+        mvn versions:set -DnewVersion=${{ steps.version.outputs.version }}
+        mvn versions:commit
+        
+    - name: Build for ${{ matrix.os }}
+      run: mvn clean package -DskipTests
+      
+    - name: Test on ${{ matrix.os }}
+      run: mvn test
+      
+    - name: Upload platform-specific artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: java-file-generator-${{ steps.version.outputs.version }}-${{ matrix.os }}
+        path: target/java-file-generator-${{ steps.version.outputs.version }}.jar
+
+  notify-release:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [create-release, build-multi-platform]
+    
+    steps:
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Create release notification
+      run: |
+        echo "🎉 Java File Generator v${{ steps.version.outputs.version }} has been released!"
+        echo "📦 Download: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
+        echo "✅ Multi-platform builds completed successfully"
